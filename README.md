@@ -1,7 +1,14 @@
 # TTS_modify 插件说明
 
 启用插件后，可对特定文本进行TTS请求。实现LLM根据对话情绪自主调用TTS。  
-仅对被`<tts></tts>`标记的文本进行TTS请求。  
+仅对被`<tts></tts>`标记的文本进行TTS请求。 
+
+# 安装插件
+
+打开Astrbot模板——插件——Astrbot插件——“+”号按钮——从链接安装
+复制仓库地址并填入
+
+<img src="https://github.com/user-attachments/assets/f4659f0a-5e86-476e-8751-8a6f5ef570ee" alt="插件安装" width="300">
 
 ## 配置项说明
 
