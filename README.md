@@ -14,7 +14,7 @@
 
 TTS触发提示词：在发送LLM请求前，插件会将`tts_prompt`动态注入到System Prompt末尾。提示词可自行修改。
 
-⚠️注意：`<tts></tts>`标签是必要的，即使要修改提示词，也不可省略。
+⚠️注意：`<tts></tts>`标签是必要的，即使要修改提示词，也不可省略；需要在配置文件中将tts触发概率调为0。
 
 <img src="https://github.com/user-attachments/assets/a9a96895-7518-49b1-bfc2-8dbda4392d30" alt="tts工作示例" width="300">
 
