@@ -105,12 +105,13 @@ class TTSModifyPlugin(Star):
 
             end = text.find(TTS_END_TAG, start + len(TTS_START_TAG))
             if end == -1:
-                tts_content = text[start + len(TTS_START_TAG) :].strip()
-                if tts_content:
-                    segments.append({"type": "tts", "content": tts_content})
+                cls._append_text_segment(segments, text[start + len(TTS_START_TAG) :])
                 break
 
             tts_content = text[start + len(TTS_START_TAG) : end].strip()
+            tts_content = cls._trim_boundary_separators(
+                cls._trim_boundary_separators(tts_content, leading=True),
+            ).strip()
             if tts_content:
                 segments.append({"type": "tts", "content": tts_content})
             cursor = end + len(TTS_END_TAG)
