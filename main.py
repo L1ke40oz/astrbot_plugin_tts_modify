@@ -158,7 +158,7 @@ class TTSModifyPlugin(Star):
 
     # ─── Hook: 结果装饰——处理 TTS 标签 ───
 
-    @on_decorating_result(priority=10)
+    @on_decorating_result(priority=13)
     async def on_decorate(self, event: AstrMessageEvent):
         result = event.get_result()
         if not result or not result.chain:
