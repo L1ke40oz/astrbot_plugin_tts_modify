@@ -35,6 +35,62 @@ class TTSModifyPlugin(Star):
 
     # ─── 辅助方法 ───
 
+    def _own_plugin_name(self) -> str:
+        """Best-effort resolve this plugin's registered name for session checks."""
+        try:
+            from astrbot.core.star.star import star_map
+
+            meta = star_map.get(self.__class__.__module__)
+            if meta and meta.name:
+                return meta.name
+        except Exception:
+            pass
+        return "astrbot_plugin_tts_modify"
+
+    async def _session_inactive(self, umo: str) -> bool:
+        """Whether this plugin is disabled for the session via AstrBot custom rules.
+
+        AstrBot's per-session plugin management only filters command / message
+        handlers, not lifecycle hooks (on_llm_request / on_decorating_result).
+        So we query the session config ourselves and skip when disabled. Fails
+        open (returns False) when the API is unavailable.
+        """
+        try:
+            from astrbot.core.star.session_plugin_manager import (
+                SessionPluginManager,
+            )
+        except Exception:
+            return False
+        try:
+            enabled = await SessionPluginManager.is_plugin_enabled_for_session(
+                umo, self._own_plugin_name()
+            )
+            return not enabled
+        except Exception:
+            return False
+
+    async def _session_tts_disabled(self, umo: str) -> bool:
+        """Whether TTS has been disabled for this session via AstrBot custom rules.
+
+        The framework's native TTS path is gated on
+        ``SessionServiceManager.should_process_tts_request``, but this plugin
+        builds Record components directly in on_decorating_result, bypassing
+        that gate. We honour the same per-session TTS toggle here so disabling
+        TTS for a session also stops <tts> tags from being voiced (tags are
+        stripped to plain text instead). Fails open (returns False) when the
+        API is unavailable.
+        """
+        try:
+            from astrbot.core.star.session_llm_manager import (
+                SessionServiceManager,
+            )
+        except Exception:
+            return False
+        try:
+            return not await SessionServiceManager.is_tts_enabled_for_session(umo)
+        except Exception:
+            return False
+
     def _get_global_config(self, event: AstrMessageEvent):
         """安全地获取全局/会话配置。"""
         try:
@@ -137,6 +193,9 @@ class TTSModifyPlugin(Star):
 
     @on_llm_request()
     async def on_llm_req(self, event: AstrMessageEvent, request: ProviderRequest):
+        if await self._session_inactive(event.unified_msg_origin):
+            return
+
         global_config = self._get_global_config(event)
         if not global_config:
             return
@@ -144,6 +203,10 @@ class TTSModifyPlugin(Star):
         # 检查全局 TTS 是否启用
         provider_tts_settings = global_config.get(self.CONFIG_KEY_TTS_SETTINGS, {})
         if not provider_tts_settings.get(self.CONFIG_KEY_ENABLE, False):
+            return
+
+        # 尊重会话级 TTS 开关（自定义规则里关闭 TTS 时不注入提示词）
+        if await self._session_tts_disabled(event.unified_msg_origin):
             return
 
         # 检查 TTS Provider 是否可用
@@ -160,6 +223,9 @@ class TTSModifyPlugin(Star):
 
     @on_decorating_result(priority=13)
     async def on_decorate(self, event: AstrMessageEvent):
+        if await self._session_inactive(event.unified_msg_origin):
+            return
+
         result = event.get_result()
         if not result or not result.chain:
             return
@@ -170,6 +236,12 @@ class TTSModifyPlugin(Star):
             return
 
         provider_tts_settings = global_config.get(self.CONFIG_KEY_TTS_SETTINGS, {})
+
+        # 会话级 TTS 开关：若被自定义规则关闭，则不生成语音，
+        # 仅将 <tts> 标签剥离为纯文本（避免标签泄露）。
+        session_tts_enabled = not await self._session_tts_disabled(
+            event.unified_msg_origin
+        )
 
         # 快速检测：是否有任何 Plain 组件包含 TTS 标签或残缺标签
         has_tts_tag = any(
@@ -197,7 +269,10 @@ class TTSModifyPlugin(Star):
                 TTS_START_TAG in comp.text or TTS_END_TAG in comp.text
             ):
                 components = await self._process_tts_text(
-                    comp.text, tts_provider, provider_tts_settings
+                    comp.text,
+                    tts_provider,
+                    provider_tts_settings,
+                    session_tts_enabled,
                 )
                 new_chain.extend(components)
                 modified = True
@@ -208,7 +283,11 @@ class TTSModifyPlugin(Star):
             result.chain = new_chain
 
     async def _process_tts_text(
-        self, text: str, tts_provider, provider_settings: dict
+        self,
+        text: str,
+        tts_provider,
+        provider_settings: dict,
+        session_tts_enabled: bool = True,
     ) -> list:
         """
         处理包含 <tts> 标签的文本，将其拆分为 Plain 和 Record 组件。
@@ -221,7 +300,10 @@ class TTSModifyPlugin(Star):
         segments = self._split_by_tts_tags(text)
         components = []
 
-        tts_enabled = provider_settings.get(self.CONFIG_KEY_ENABLE, False)
+        tts_enabled = (
+            provider_settings.get(self.CONFIG_KEY_ENABLE, False)
+            and session_tts_enabled
+        )
         dual_output = provider_settings.get("dual_output", False)
         use_file_service = provider_settings.get("use_file_service", False)
         notify_failure = self.config.get(self.CONFIG_KEY_NOTIFY_FAILURE, False)
@@ -248,7 +330,9 @@ class TTSModifyPlugin(Star):
                 else:
                     # TTS 不可用或生成失败，回退为纯文本
                     if not tts_enabled:
-                        logger.warning("检测到 <tts> 标签，但全局 TTS 未启用，剥离标签显示文本。")
+                        logger.warning(
+                            "检测到 <tts> 标签，但 TTS 未启用（全局关闭或本会话已禁用），剥离标签显示文本。"
+                        )
                     if notify_failure and tts_enabled and tts_provider:
                         components.append(Plain(f"[TTS失败] {tts_content}"))
                     else:
